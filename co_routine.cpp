@@ -39,6 +39,7 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 #include <limits.h>
+#include <sys/mman.h>
 
 extern "C"
 {
@@ -265,13 +266,33 @@ void inline Join( TLink*apLink,TLink *apOther )
 	apOther->head = apOther->tail = NULL;
 }
 
+static const int kPageSize = 4096;
+void *mmap_alloc(size_t length) {
+  int mmap_size = length + 2 * kPageSize;
+
+  unsigned char *addr =
+      (unsigned char *)mmap(NULL, mmap_size, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (addr == NULL) {
+    return NULL;
+  }
+
+  mprotect(addr, kPageSize, PROT_NONE);
+  mprotect(addr + length + kPageSize, kPageSize, PROT_NONE);
+  return addr + kPageSize;
+}
+
+int munmap_free(void *addr, size_t length) {
+  return munmap((unsigned char *)addr - kPageSize, length + 2 * kPageSize);
+}
+
 /////////////////for copy stack //////////////////////////
 stStackMem_t* co_alloc_stackmem(unsigned int stack_size)
 {
 	stStackMem_t* stack_mem = (stStackMem_t*)malloc(sizeof(stStackMem_t));
 	stack_mem->occupy_co= NULL;
 	stack_mem->stack_size = stack_size;
-	stack_mem->stack_buffer = (char*)malloc(stack_size);
+	stack_mem->stack_buffer = (char*)mmap_alloc(stack_size);
 	stack_mem->stack_bp = stack_mem->stack_buffer + stack_size;
 	return stack_mem;
 }
@@ -532,7 +553,7 @@ void co_free( stCoRoutine_t *co )
 {
     if (!co->cIsShareStack) 
     {    
-        free(co->stack_mem->stack_buffer);
+				munmap_free(co->stack_mem->stack_buffer, co->stack_mem->stack_size);
         free(co->stack_mem);
     }   
     free( co );
